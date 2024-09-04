@@ -6,7 +6,9 @@ from math import atan2, degrees
 import os
 from datetime import datetime
 import supabase
-from database import supabase
+from database import db1, user1
+import time
+from audioplayer import play_random_audio
 
 face_recognition_model = tf.keras.models.load_model('face_recognition.keras')
 smile_detection_model = tf.keras.models.load_model('smile_detection_model.h5')
@@ -14,7 +16,7 @@ smile_detection_model = tf.keras.models.load_model('smile_detection_model.h5')
 # Class names for face recognition
 class_names = []
 
-class_names = [f.split('_')[0] for f in os.listdir("DATA/known faces")] 
+class_names = [f for f in os.listdir("DATA/known faces")] 
 
 class_names.sort()
 last = class_names[-1]
@@ -45,11 +47,17 @@ os.makedirs(output_dir, exist_ok=True)
 
 file_counters = {name: 1 for name in class_names}  # Initialize file counter
 
+last_save_time = {name: 0 for name in class_names}
+cooldown_period = 2 * 60 * 60  # 2 hours in seconds
+last_submission_time = {}
+audio_cooldown_period = 2 * 60 * 60 
+last_audio_play_time = {name: 0 for name in class_names}
+
 def get_next_filename(label):
     if label == "Unknown":
         label = "unknown"  # Handle the unknown label case
-    dt = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    filename = os.path.join(output_dir, f'{label}_attendance_{dt}.jpg')
+    dt = datetime.now()
+    filename = os.path.join(output_dir, f'{label}_attendance_{dt.strftime("%Y-%m-%d-%H-%M-%S")}.jpg')
     return filename, dt
 
 def upload_image(file_bytes, file_name):
@@ -59,7 +67,7 @@ def upload_image(file_bytes, file_name):
     
     # Unggah file ke storage dalam bucket tertentu
     try:
-        response = supabase.storage.from_('bucket_cps').upload(f'captured_images/{file_name}', file_bytes)
+        response = db1.storage.from_('bucket_cps').upload(f'captured_images/{file_name}', file_bytes)
         print(response.__dict__)
 
         if response.status_code != 200:
@@ -71,38 +79,70 @@ def upload_image(file_bytes, file_name):
         print('File uploaded successfully')
         return response_json.get('path')  # Adjust according to actual response structure
     except Exception as e:
-        print('An error occurred:', str(e))
+        print('An error occurred when uploading:', str(e))
         return None
 
 def handle_capture(image, code):
-    file_name, timestamp = get_next_filename(code)
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    file_name = f'{code}_attendance_{timestamp}.jpg'
+    global last_save_time  # Access the global last_save_time dictionary
+    current_time = time.time()
 
-    # Convert captured image to bytes
-    _, buffer = cv2.imencode('.jpg', image)
-    image_bytes = buffer.tobytes()
+    # Check if the cooldown period has passed
+    if current_time - last_save_time[code] >= cooldown_period:
+        file_name, timestamp = get_next_filename(code)
 
-    image_path = upload_image(image_bytes, file_name)
+        timestamp = datetime.now()
+        file_name = f'{code}_attendance_{timestamp.strftime("%Y-%m-%d-%H-%M-%S")}.jpg'
 
-    if image_path:
-        save_capture_info(code, image_path, timestamp)
+        # Convert captured image to bytes
+        _, buffer = cv2.imencode('.jpg', image)
+        image_bytes = buffer.tobytes()
 
-def save_capture_info(code, image_path, timestamp):
-    data = {
-        'code': code,
-        'image_path': image_path,
-        'captured_at': timestamp
-    }
+        image_path = upload_image(image_bytes, file_name)
+        
+        
 
-    response = supabase.table('captured_faces').insert(data).execute()
+        if image_path:
+            save_capture_info(code, image_path, timestamp)
+            last_save_time[code] = current_time  # Update last save time
 
-    if response.get('error'):
-        print('Insert error:', response['error'])
+        # Check if the cooldown period has passed for playing audio
+        if current_time - last_audio_play_time[code] >= audio_cooldown_period:
+            play_random_audio('audioplayer/components')
+            last_audio_play_time[code] = current_time  # Update last audio play time
     else:
-        print('Data inserted:', response['data'])
+        print(f"Cooldown active for {code}. Image not saved.")
 
+def save_capture_info(class_names, timestamp:datetime):
+    try:
+        assisstant_code, name = class_names.split('_')
+    except ValueError:
+        print(f"Error: class_names '{class_names}' is not in the correct format.")
+        return
+    
+    global last_submission_time
+    current_time = time.time()
+    person_key = f"{assisstant_code}_{name}"
+    
+    assisstant_code, name = class_names.split('_')
+    # Check if the cooldown period has passed
+    if person_key not in last_submission_time or (current_time - last_submission_time[person_key] >= cooldown_period):
+        assisstant_code, name = class_names.split('_')
+        
+        data = {
+            'assisstant_code': assisstant_code,
+            'name': name,
+            'time': timestamp.isoformat()
+        }
+        try:
+            response = db1.schema('public').table('Attendance').insert(data).execute()
+            last_submission_time[person_key] = current_time  # Update last submission time
+            print("Table Insert Response\t: ", response)
+            
+        except Exception as e:
+            print(f"An error occurred when inserting into the table: {e}")
+    else:
+        print(f"Cooldown in effect for {name}. Data not sent.")
+                
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -113,7 +153,8 @@ while True:
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     faces = face_cascade.detectMultiScale(gray_frame, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-
+    smile_angle = 0.0
+    
     # Process face landmarks using MediaPipe Face Mesh
     results = face_mesh.process(rgb_frame)
 
@@ -161,7 +202,7 @@ while True:
         smile_label = 'Smiling' if smile_prediction[0][1] > 0.5 else 'Smile more!!'
 
         cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-        cv2.putText(frame, f"{label} ({confidence:.2f}%)", (x, y - 10),
+        cv2.putText(frame, f"{label.split('_')[0]} ({confidence:.2f}%)", (x, y - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
         cv2.putText(frame, f"{smile_label} ({(smile_prediction[0][1] * 100):.2f}%)", (x, y + h + 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
@@ -181,6 +222,8 @@ while True:
 
             # Upload the image and handle capture (save information)
                 handle_capture(face_image, label)
+                save_capture_info(label, timestamp)
+                # play_random_audio('audioplayer/components')
                 
     cv2.putText(frame, f"{datetime.now()}", (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
     cv2.imshow('BOOSTIFY', frame)
@@ -189,5 +232,7 @@ while True:
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
+db1.auth.sign_out()
+db1.auth.close()
 cap.release()
 cv2.destroyAllWindows()
