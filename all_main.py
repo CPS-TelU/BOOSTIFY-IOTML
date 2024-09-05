@@ -13,7 +13,6 @@ from audioplayer import play_random_audio
 face_recognition_model = tf.keras.models.load_model('face_recognition.keras')
 smile_detection_model = tf.keras.models.load_model('smile_detection_model.h5')
 
-# Class names for face recognition
 class_names = []
 
 class_names = [f for f in os.listdir("DATA/known faces")] 
@@ -32,7 +31,6 @@ confidence_threshold = 95.0
 
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
-# Initialize MediaPipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh()
 
@@ -45,7 +43,7 @@ if not cap.isOpened():
 output_dir = 'D://project cps/captured_smile'
 os.makedirs(output_dir, exist_ok=True)
 
-file_counters = {name: 1 for name in class_names}  # Initialize file counter
+file_counters = {name: 1 for name in class_names}  
 
 last_save_time = {name: 0 for name in class_names}
 cooldown_period = 2 * 60 * 60  # 2 hours in seconds
@@ -55,17 +53,16 @@ last_audio_play_time = {name: 0 for name in class_names}
 
 def get_next_filename(label):
     if label == "Unknown":
-        label = "unknown"  # Handle the unknown label case
+        label = "unknown" 
     dt = datetime.now()
     filename = os.path.join(output_dir, f'{label}_attendance_{dt.strftime("%Y-%m-%d-%H-%M-%S")}.jpg')
     return filename, dt
 
 def upload_image(file_bytes, file_name):
-    # Extract the filename from the full path
     file_name = os.path.basename(file_name)
     file_name = file_name.replace("\\", "/")
     
-    # Unggah file ke storage dalam bucket tertentu
+    # Unggah file ke storage dalam bucket
     try:
         response = db1.storage.from_('bucket_cps').upload(f'captured_images/{file_name}', file_bytes)
         print(response.__dict__)
@@ -83,10 +80,9 @@ def upload_image(file_bytes, file_name):
         return None
 
 def handle_capture(image, code):
-    global last_save_time  # Access the global last_save_time dictionary
+    global last_save_time  
     current_time = time.time()
 
-    # Check if the cooldown period has passed
     if current_time - last_save_time[code] >= cooldown_period:
         file_name, timestamp = get_next_filename(code)
 
@@ -98,17 +94,15 @@ def handle_capture(image, code):
         image_bytes = buffer.tobytes()
 
         image_path = upload_image(image_bytes, file_name)
-        
-        
 
         if image_path:
             save_capture_info(code, image_path, timestamp)
-            last_save_time[code] = current_time  # Update last save time
+            last_save_time[code] = current_time  
 
         # Check if the cooldown period has passed for playing audio
         if current_time - last_audio_play_time[code] >= audio_cooldown_period:
             play_random_audio('audioplayer/components')
-            last_audio_play_time[code] = current_time  # Update last audio play time
+            last_audio_play_time[code] = current_time 
     else:
         print(f"Cooldown active for {code}. Image not saved.")
 
@@ -124,7 +118,7 @@ def save_capture_info(class_names, timestamp:datetime):
     person_key = f"{assisstant_code}_{name}"
     
     assisstant_code, name = class_names.split('_')
-    # Check if the cooldown period has passed
+    
     if person_key not in last_submission_time or (current_time - last_submission_time[person_key] >= cooldown_period):
         assisstant_code, name = class_names.split('_')
         
@@ -162,13 +156,11 @@ while True:
         for face_landmarks in results.multi_face_landmarks:
             h, w, _ = frame.shape
 
-            # Detect mouth landmarks
             left_mouth = np.array([int(face_landmarks.landmark[61].x * w), int(face_landmarks.landmark[61].y * h)])
             right_mouth = np.array([int(face_landmarks.landmark[291].x * w), int(face_landmarks.landmark[291].y * h)])
             top_mouth = np.array([int(face_landmarks.landmark[13].x * w), int(face_landmarks.landmark[13].y * h)])
             bottom_mouth = np.array([int(face_landmarks.landmark[14].x * w), int(face_landmarks.landmark[14].y * h)])
 
-            # Draw the mouth landmarks
             cv2.circle(frame, tuple(left_mouth), 2, (0, 255, 0), -1)
             cv2.circle(frame, tuple(right_mouth), 2, (0, 255, 0), -1)
             cv2.circle(frame, tuple(top_mouth), 2, (0, 255, 0), -1)
@@ -177,7 +169,6 @@ while True:
             cv2.line(frame, tuple(left_mouth), tuple(right_mouth), (0, 255, 0), 1)
             cv2.line(frame, tuple(top_mouth), tuple(bottom_mouth), (0, 255, 0), 1)
 
-            # Calculate smile angle
             mouth_width = np.linalg.norm(right_mouth - left_mouth)
             mouth_height = np.linalg.norm(top_mouth - bottom_mouth)
             smile_angle = degrees(atan2(mouth_height, mouth_width))
@@ -220,10 +211,8 @@ while True:
                 _, buffer = cv2.imencode('.jpg', face_image)
                 image_bytes = buffer.tobytes()
 
-            # Upload the image and handle capture (save information)
                 handle_capture(face_image, label)
                 save_capture_info(label, timestamp)
-                # play_random_audio('audioplayer/components')
                 
     cv2.putText(frame, f"{datetime.now()}", (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
     cv2.imshow('BOOSTIFY', frame)
