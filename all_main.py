@@ -104,7 +104,7 @@ else:
             print(last_submission_time)
 
     except Exception as e:
-        print(f"Terjadi kesalahan saat mengambil data: {e}")
+        print(f"An error occured when fetching data: {e}")
 
     
 
@@ -165,7 +165,7 @@ def handle_capture(image, code):
             last_submission_time[code] = timestamp  # Update last save time
     
     else:
-        print(f"Cooldown active for {code}. Image not saved.")
+        print(f"Cooldown on saving active for {code}. Image not saved.")
     
     print(last_submission_time)
     with open(last_submission_dir, 'w') as f:
@@ -203,7 +203,7 @@ def save_capture_info(class_names, timestamp:datetime):
             print(f"An error occurred when inserting into the table: {e}")
         
     else:
-        print(f"Cooldown in effect for {name}. Data not sent.")
+        print(f"Cooldown on upload active for {name}. Data not sent.")
 
     with open(last_save_dir, 'w') as f:
         f.write(str(last_save_time))
@@ -290,7 +290,7 @@ while True:
                 save_capture_info(label, timestamp)
                 # play_random_audio('audioplayer/components')
                 
-    cv2.putText(frame, f"{datetime.now()}", (30, 10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 1)
+    cv2.putText(frame, f"{datetime.now()}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
     #cv2.namedWindow('BOOSTIFY', cv2.WINDOW_NORMAL)
     cv2.imshow('BOOSTIFY', frame)
     #cv2.resizeWindow('BOOSTIFY', 480, 320)
