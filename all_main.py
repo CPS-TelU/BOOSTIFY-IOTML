@@ -6,18 +6,34 @@ from math import atan2, degrees
 import os
 from datetime import datetime
 import supabase
-from database import db1, user1
+from database import db1
 import time
 from audioplayer import play_random_audio
+from ast import literal_eval
 
-face_recognition_model = tf.keras.models.load_model('face_recognition.keras')
-smile_detection_model = tf.keras.models.load_model('smile_detection_model.h5')
+face_recognition_model = tf.keras.models.load_model('/home/cps/BOOSTIFY-IOTML/face_recognition.keras')
+smile_detection_model = tf.keras.models.load_model('/home/cps/BOOSTIFY-IOTML/smile_detection_model.h5')
+str_class_names = ""
 
 # Class names for face recognition
-class_names = []
+try:
+    imported_names = db1.storage.from_('bucket_cps').download('model_label/known_faces.txt')
+    
+    # Updates the names in the file
+    if imported_names:
+        file = open('/home/cps/BOOSTIFY_cache/known_faces.txt', 'w')
+        str_class_names = str(imported_names)[2:-1]
+        print(str_class_names)
+        file.write(str_class_names)
+        print('Face names downloaded successfully')
+        
+    
+except Exception as e:
+    print('An error occurred when downloading:', str(e))
+    file = open('/home/cps/BOOSTIFY_cache/known_faces.txt', 'r')
+    str_class_names = file.read()
 
-class_names = [f for f in os.listdir("DATA/known faces")] 
-
+class_names = literal_eval(str_class_names)
 class_names.sort()
 last = class_names[-1]
 for i in range(len(class_names)-2, -1, -1):
@@ -42,23 +58,62 @@ if not cap.isOpened():
     print("Error: Could not open webcam.")
     exit()
 
-output_dir = 'D://project cps/captured_smile'
+#width = 1920
+#height = 1080
+#cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+#cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+output_dir = '/home/cps/BOOSTIFY_cache/captured_smile'
+audio_dir = '/home/cps/BOOSTIFY_audio/components'
+last_submission_dir = '/home/cps/BOOSTIFY_cache/last_submission.txt'
+last_save_dir = '/home/cps/BOOSTIFY_cache/last_save.txt'
 os.makedirs(output_dir, exist_ok=True)
 
-file_counters = {name: 1 for name in class_names}  # Initialize file counter
-
-last_save_time = {name: 0 for name in class_names}
-cooldown_period = 2 * 60 * 60  # 2 hours in seconds
+cooldown_period = 1  # 1 day
 last_submission_time = {}
-audio_cooldown_period = 2 * 60 * 60 
-last_audio_play_time = {name: 0 for name in class_names}
+last_save_time = {}
+
+if os.path.exists(last_save_dir):
+    with open(last_save_dir, 'r') as f:
+        last_save_time = literal_eval(f.read())
+
+if os.path.exists(last_submission_dir):
+    with open(last_submission_dir, 'r') as f:
+        last_submission_time = literal_eval(f.read())
+
+else:
+    try:
+        # Mengambil semua entri dari tabel Attendance
+        response = db1.table('Attendance').select('*').execute()
+        entries = response.data
+
+        # Memproses entri untuk mendapatkan yang terbaru per asisten
+        for entry in entries:
+            print(entry)
+            assisstant_code = entry['assisstant_code']
+            name = entry['name']
+            time = entry['time']
+            person_key = f"{assisstant_code}_{name}"
+            
+            # Memeriksa apakah entri saat ini lebih baru dari entri terakhir yang sudah ada
+            if person_key not in last_submission_time or datetime.fromisoformat(time) > last_submission_time[person_key]:
+                last_submission_time[person_key] = time
+
+        with open(last_submission_dir, 'w') as f:
+            f.write(str(last_submission_time))
+            print(last_submission_time)
+
+    except Exception as e:
+        print(f"Terjadi kesalahan saat mengambil data: {e}")
+
+    
 
 def get_next_filename(label):
     if label == "Unknown":
         label = "unknown"  # Handle the unknown label case
-    dt = datetime.now()
-    filename = os.path.join(output_dir, f'{label}_attendance_{dt.strftime("%Y-%m-%d-%H-%M-%S")}.jpg')
-    return filename, dt
+    current_time = datetime.now()
+    filename = os.path.join(output_dir, f'{label}_attendance_{current_time.strftime("%Y-%m-%d-%H-%M-%S")}.jpg')
+    return filename, current_time
 
 def upload_image(file_bytes, file_name):
     # Extract the filename from the full path
@@ -83,14 +138,15 @@ def upload_image(file_bytes, file_name):
         return None
 
 def handle_capture(image, code):
-    global last_save_time  # Access the global last_save_time dictionary
-    current_time = time.time()
+    global last_submission_time  # Access the global last_save_time dictionary
+    timestamp = datetime.now()
 
     # Check if the cooldown period has passed
-    if current_time - last_save_time[code] >= cooldown_period:
+    checking = last_submission_time == {} or code not in last_submission_time or (timestamp - datetime.fromisoformat(last_submission_time[code])).days >= cooldown_period
+
+    if checking:
         file_name, timestamp = get_next_filename(code)
 
-        timestamp = datetime.now()
         file_name = f'{code}_attendance_{timestamp.strftime("%Y-%m-%d-%H-%M-%S")}.jpg'
 
         # Convert captured image to bytes
@@ -99,18 +155,22 @@ def handle_capture(image, code):
 
         image_path = upload_image(image_bytes, file_name)
         
-        
-
         if image_path:
             save_capture_info(code, image_path, timestamp)
-            last_save_time[code] = current_time  # Update last save time
 
-        # Check if the cooldown period has passed for playing audio
-        if current_time - last_audio_play_time[code] >= audio_cooldown_period:
-            play_random_audio('audioplayer/components')
-            last_audio_play_time[code] = current_time  # Update last audio play time
+            # Check if the cooldown period has passed for playing audio
+            if checking:
+                play_random_audio(audio_dir)
+
+            last_submission_time[code] = timestamp  # Update last save time
+    
     else:
         print(f"Cooldown active for {code}. Image not saved.")
+    
+    print(last_submission_time)
+    with open(last_submission_dir, 'w') as f:
+        f.write(str(last_submission_time))
+
 
 def save_capture_info(class_names, timestamp:datetime):
     try:
@@ -119,29 +179,34 @@ def save_capture_info(class_names, timestamp:datetime):
         print(f"Error: class_names '{class_names}' is not in the correct format.")
         return
     
-    global last_submission_time
-    current_time = time.time()
+    global last_save_time
     person_key = f"{assisstant_code}_{name}"
     
     assisstant_code, name = class_names.split('_')
     # Check if the cooldown period has passed
-    if person_key not in last_submission_time or (current_time - last_submission_time[person_key] >= cooldown_period):
+    if last_save_time == {} or person_key not in last_save_time or (timestamp - datetime.fromisoformat(last_save_time[person_key])).days >= cooldown_period:
         assisstant_code, name = class_names.split('_')
         
         data = {
             'assisstant_code': assisstant_code,
             'name': name,
             'time': timestamp.isoformat()
-        }
+        }      
+        
         try:
-            response = db1.schema('public').table('Attendance').insert(data).execute()
-            last_submission_time[person_key] = current_time  # Update last submission time
+            response = db1.schema('public').table('Attendance').insert(data).execute()    
             print("Table Insert Response\t: ", response)
+            
+            last_save_time[person_key] = timestamp.isoformat()  # Update last submission time
             
         except Exception as e:
             print(f"An error occurred when inserting into the table: {e}")
+        
     else:
         print(f"Cooldown in effect for {name}. Data not sent.")
+
+    with open(last_save_dir, 'w') as f:
+        f.write(str(last_save_time))
                 
 while True:
     ret, frame = cap.read()
@@ -225,9 +290,11 @@ while True:
                 save_capture_info(label, timestamp)
                 # play_random_audio('audioplayer/components')
                 
-    cv2.putText(frame, f"{datetime.now()}", (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+    cv2.putText(frame, f"{datetime.now()}", (30, 10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 1)
+    #cv2.namedWindow('BOOSTIFY', cv2.WINDOW_NORMAL)
     cv2.imshow('BOOSTIFY', frame)
-
+    #cv2.resizeWindow('BOOSTIFY', 480, 320)
+    #cv2.setWindowProperty('BOOSTIFY', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
