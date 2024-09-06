@@ -106,7 +106,8 @@ else:
     except Exception as e:
         print(f"An error occured when fetching data: {e}")
 
-    
+# Check if the audio device is connected by playing audio
+play_random_audio(audio_dir)    
 
 def get_next_filename(label):
     if label == "Unknown":
@@ -159,10 +160,11 @@ def handle_capture(image, code):
             save_capture_info(code, image_path, timestamp)
 
             # Check if the cooldown period has passed for playing audio
-            if checking:
-                play_random_audio(audio_dir)
-
+            play_random_audio(audio_dir)
+            
             last_submission_time[code] = timestamp  # Update last save time
+
+        
     
     else:
         print(f"Cooldown on saving active for {code}. Image not saved.")
