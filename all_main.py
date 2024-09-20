@@ -58,11 +58,6 @@ if not cap.isOpened():
     print("Error: Could not open webcam.")
     exit()
 
-#width = 1920
-#height = 1080
-#cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-#cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-
 output_dir = '/home/cps/BOOSTIFY_cache/captured_smile'
 audio_dir = '/home/cps/BOOSTIFY_audio/components'
 last_submission_dir = '/home/cps/BOOSTIFY_cache/last_submission.txt'
@@ -158,9 +153,6 @@ def handle_capture(image, code):
         
         if image_path:
             save_capture_info(code, image_path, timestamp)
-
-            # Check if the cooldown period has passed for playing audio
-            play_random_audio(audio_dir)
             
             last_submission_time[code] = timestamp  # Update last save time
 
@@ -290,13 +282,14 @@ while True:
             # Upload the image and handle capture (save information)
                 handle_capture(face_image, label)
                 save_capture_info(label, timestamp)
-                # play_random_audio('audioplayer/components')
+                
+                play_random_audio(audio_dir)
                 
     cv2.putText(frame, f"{datetime.now()}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-    #cv2.namedWindow('BOOSTIFY', cv2.WINDOW_NORMAL)
+    cv2.namedWindow('BOOSTIFY', cv2.WINDOW_NORMAL)
     cv2.imshow('BOOSTIFY', frame)
-    #cv2.resizeWindow('BOOSTIFY', 480, 320)
-    #cv2.setWindowProperty('BOOSTIFY', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    cv2.resizeWindow('BOOSTIFY', 480, 320)
+    cv2.setWindowProperty('BOOSTIFY', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
