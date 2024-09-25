@@ -1,5 +1,6 @@
 import cv2
 import tensorflow as tf
+from tensorflow.keras.utils import img_to_array
 import numpy as np
 import mediapipe as mp
 from math import atan2, degrees
@@ -44,13 +45,11 @@ for i in range(len(class_names)-2, -1, -1):
         
 print(class_names)
 
-confidence_threshold = 95.0
+confidence_threshold = 0.99
 
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-# Initialize MediaPipe Face Mesh
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh()
+# Inisialisasi MediaPipe
+mp_face_detection = mp.solutions.face_detection
+mp_drawing = mp.solutions.drawing_utils
 
 cap = cv2.VideoCapture(0)
 
@@ -103,6 +102,41 @@ else:
 
 # Check if the audio device is connected by playing audio
 play_random_audio(audio_dir)    
+
+# Fungsi untuk mendeteksi wajah
+def detect_faces(image):
+	fh, fw, fc = image.shape
+
+	with mp_face_detection.FaceDetection(min_detection_confidence=0.9) as face_detection:
+		results = face_detection.process(image)
+		if results.detections:
+			detection = results.detections[0]
+			print(detection.location_data.relative_bounding_box)
+			b = detection.location_data.relative_bounding_box
+			x_ = int((b.xmin) * fw) if b.xmin > 0 else 0
+			y_ = int((b.ymin) * fh) if b.ymin > 0 else 0
+			_x = int((b.xmin + b.width) * fw) if b.xmin + b.width < 1 else fw
+			_y = int((b.ymin + b.height) * fh) if b.ymin + b.height < 1 else fh
+			return x_, y_, _x, _y
+		else: return None
+
+def predict_identity_and_expression(image, resolution, model):
+	# Preproses gambar
+	image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+	image = cv2.resize(image, resolution)
+	image = image.astype("float") / 255.0
+	image = img_to_array(image)
+	image = np.expand_dims(image, axis=0)
+
+	# Prediksi identitas dan ekspresi
+	preds = model.predict(image)
+
+	# Mendapatkan label identitas dan ekspresi
+	conf = np.max(preds)
+	class_num = np.argmax(preds)
+
+	print(preds)
+	return class_num, conf
 
 def get_next_filename(label):
     if label == "Unknown":
@@ -165,7 +199,6 @@ def handle_capture(image, code):
     with open(last_submission_dir, 'w') as f:
         f.write(str(last_submission_time))
 
-
 def save_capture_info(class_names, timestamp:datetime):
     try:
         assisstant_code, name = class_names.split('_')
@@ -203,96 +236,56 @@ def save_capture_info(class_names, timestamp:datetime):
         f.write(str(last_save_time))
                 
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Failed to capture image.")
-        break
+	ret, frame = cap.read()
+	if not ret:
+		print("Error: Failed to capture image.")
+		break
+	
+	coords = detect_faces(frame)
+	if coords != None:
+		x_start, y_start, x_end, y_end = coords
+		if x_end * y_end < frame.size:
+			face_frame = frame[y_start: y_end, x_start:x_end]
 
-    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+			predicted_class, confidence = predict_identity_and_expression(face_frame, (96, 96), face_recognition_model)
+			label = "Unknown" if confidence < confidence_threshold else class_names[predicted_class]
 
-    faces = face_cascade.detectMultiScale(gray_frame, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-    smile_angle = 0.0
-    
-    # Process face landmarks using MediaPipe Face Mesh
-    results = face_mesh.process(rgb_frame)
+			is_smiling, smile_confidence = predict_identity_and_expression(face_frame, (28, 28), smile_detection_model)
+			smile_label = 'Smiling' if ((is_smiling == True) and (smile_confidence > 0.7)) else 'Smile more!!'
 
-    if results.multi_face_landmarks:
-        for face_landmarks in results.multi_face_landmarks:
-            h, w, _ = frame.shape
+			cv2.rectangle(frame, (x_start, y_start), (x_end, y_end), (255, 0, 0), 2)
+			cv2.putText(frame, f"{label.split('_')[0]} ({confidence:.2f})", (x_start, y_start - 10),
+						cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+			cv2.putText(frame, f"{smile_label}", (x_start, y_end + 20),
+						cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-            # Detect mouth landmarks
-            left_mouth = np.array([int(face_landmarks.landmark[61].x * w), int(face_landmarks.landmark[61].y * h)])
-            right_mouth = np.array([int(face_landmarks.landmark[291].x * w), int(face_landmarks.landmark[291].y * h)])
-            top_mouth = np.array([int(face_landmarks.landmark[13].x * w), int(face_landmarks.landmark[13].y * h)])
-            bottom_mouth = np.array([int(face_landmarks.landmark[14].x * w), int(face_landmarks.landmark[14].y * h)])
+			
+			# Save image if person is smiling
+			if smile_label == 'Smiling':
+				filename, timestamp = get_next_filename(label)
+				if label.lower() != "unknown":    
+					face_image = frame[y_start:y_end, x_start:x_end]
+					cv2.imwrite(filename, face_image)
+					print(f"BOOSTIFY!!!!!, Image saved as '{filename}'")
 
-            # Draw the mouth landmarks
-            cv2.circle(frame, tuple(left_mouth), 2, (0, 255, 0), -1)
-            cv2.circle(frame, tuple(right_mouth), 2, (0, 255, 0), -1)
-            cv2.circle(frame, tuple(top_mouth), 2, (0, 255, 0), -1)
-            cv2.circle(frame, tuple(bottom_mouth), 2, (0, 255, 0), -1)
+				# Convert the image to bytes for uploading
+					_, buffer = cv2.imencode('.jpg', face_image)
+					image_bytes = buffer.tobytes()
 
-            cv2.line(frame, tuple(left_mouth), tuple(right_mouth), (0, 255, 0), 1)
-            cv2.line(frame, tuple(top_mouth), tuple(bottom_mouth), (0, 255, 0), 1)
+				# Upload the image and handle capture (save information)
+					handle_capture(face_image, label)
+					save_capture_info(label, timestamp)
+					
+					play_random_audio(audio_dir)
+				
+	cv2.putText(frame, f"{datetime.now()}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+	cv2.namedWindow('BOOSTIFY', cv2.WINDOW_NORMAL)
+	cv2.imshow('BOOSTIFY', frame)
+	cv2.resizeWindow('BOOSTIFY', 480, 320)
+	#cv2.setWindowProperty('BOOSTIFY', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
-            # Calculate smile angle
-            mouth_width = np.linalg.norm(right_mouth - left_mouth)
-            mouth_height = np.linalg.norm(top_mouth - bottom_mouth)
-            smile_angle = degrees(atan2(mouth_height, mouth_width))
-
-    for (x, y, w, h) in faces:
-        # Extract face region of interest
-        face_roi = gray_frame[y:y + h, x:x + w]
-
-        resized_face = cv2.resize(face_roi, (96, 96))
-        input_image = resized_face.reshape(1, 96, 96, 1) / 255.0
-
-        predictions = face_recognition_model.predict(input_image)
-        predicted_class = np.argmax(predictions)
-        confidence = np.max(predictions) * 100
-
-        label = "Unknown" if confidence < confidence_threshold else class_names[predicted_class]
-
-        smile_input_image = cv2.resize(face_roi, (28, 28))
-        smile_input_image = smile_input_image.reshape(1, 28, 28, 1) / 255.0
-
-        smile_prediction = smile_detection_model.predict(smile_input_image)
-        smile_label = 'Smiling' if smile_prediction[0][1] > 0.5 else 'Smile more!!'
-
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-        cv2.putText(frame, f"{label.split('_')[0]} ({confidence:.2f}%)", (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-        cv2.putText(frame, f"{smile_label} ({(smile_prediction[0][1] * 100):.2f}%)", (x, y + h + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-        
-        # Save image if smile_angle > 8 and person is smiling
-        if smile_label == 'Smiling' and smile_angle > 6:
-            filename, timestamp = get_next_filename(label)
-            if label.lower() != "unknown":    
-                face_image = frame[y:y + h, x:x + w]
-                cv2.imwrite(filename, face_image)
-                print(f"BOOSTIFY!!!!!, Image saved as '{filename}'")
-
-            # Convert the image to bytes for uploading
-                _, buffer = cv2.imencode('.jpg', face_image)
-                image_bytes = buffer.tobytes()
-
-            # Upload the image and handle capture (save information)
-                handle_capture(face_image, label)
-                save_capture_info(label, timestamp)
-                
-                play_random_audio(audio_dir)
-                
-    cv2.putText(frame, f"{datetime.now()}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-    cv2.namedWindow('BOOSTIFY', cv2.WINDOW_NORMAL)
-    cv2.imshow('BOOSTIFY', frame)
-    cv2.resizeWindow('BOOSTIFY', 480, 320)
-    cv2.setWindowProperty('BOOSTIFY', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+	if cv2.waitKey(1) & 0xFF == ord('q'):
+		break
 
 db1.auth.sign_out()
 db1.auth.close()
