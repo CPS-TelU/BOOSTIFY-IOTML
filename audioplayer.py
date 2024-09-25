@@ -28,8 +28,8 @@ def play_random_audio(directory):
     print(f"Now playing: {selected_audio}")
     
     # Keep the program running until the audio is done playing
-    while pygame.mixer.music.get_busy():
-        continue
+    #while pygame.mixer.music.get_busy():
+    #    continue
 
 # Example usage:
 # audio_directory = "components"  # Replace with the path to your audio files
